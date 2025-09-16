@@ -1,0 +1,6 @@
+[submodule "src/tests/Unity"]
+	path = src/tests/Unity
+	url = https://github.com/ThrowTheSwitch/Unity.git
+[submodule "src/raylib"]
+	path = src/raylib
+	url = https://github.com/raysan5/raylib.git
