@@ -35,7 +35,7 @@ extern uint16_t stack[16];
 typedef uint16_t instr_t;
 
 #ifdef DEBUG
-  void _execute_instruction(instr_t instruction);
+  bool _execute_instruction(instr_t instruction);
 #endif
 
 

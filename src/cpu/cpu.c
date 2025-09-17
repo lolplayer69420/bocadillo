@@ -10,6 +10,8 @@
 #include <time.h>
 
 #define INLINE static inline __attribute__((always_inline))
+#define CPU_CYCLE_DURATION (double)(1.0 / 800.0)
+#define DELAY_CYCLE_DURATION (double)(1.0 / 60.0)
 
 unsigned char memory[4096];
 uint16_t stack[16];
@@ -93,6 +95,9 @@ uint8_t sprites[] = {
 };
 
 CPUState cpu_state;
+struct timespec last_cpu_cycle_time;
+struct timespec last_delay_cycle_time;
+SoundCallback current_sound_callback;
 
 
 void load_program(const char *path) {
@@ -106,9 +111,12 @@ void load_program(const char *path) {
 }
 
 
-void initialize_cpu() {
+void initialize_cpu(SoundCallback sound_callback) {
   memset(&cpu_state, 0, sizeof(CPUState));
   memcpy(memory, sprites, sizeof(sprites));
+  clock_gettime(CLOCK_REALTIME, &last_cpu_cycle_time);
+  clock_gettime(CLOCK_REALTIME, &last_delay_cycle_time);
+  current_sound_callback = sound_callback;
 
   cpu_state.pc = PROGRAM_START;
 }
@@ -183,6 +191,7 @@ void _handle_key_press() {
     cpu_state.key_register = 0;
   }
 }
+
 
 INLINE void _do_branches(uint8_t operation, uint8_t x, uint8_t y,
                          uint16_t constant) {
@@ -259,7 +268,7 @@ INLINE void _do_memory_instructions(uint8_t register_x, uint8_t operation) {
       break;
     case 0x15:
       cpu_state.delay_timer = cpu_state.register_file[register_x];
-  break;
+      break;
     case 0x18:
       cpu_state.sound_timer = cpu_state.register_file[register_x];
       break;
@@ -330,7 +339,7 @@ void send_key(uint8_t key) {
 }
 
 
-void _execute_instruction(instr_t instruction) {
+bool _execute_instruction(instr_t instruction) {
   uint8_t opcode = get_opcode(instruction);
   uint8_t register_x = get_register_x(instruction);
   uint8_t register_y = get_register_y(instruction);
@@ -355,7 +364,7 @@ void _execute_instruction(instr_t instruction) {
     case 0x09:
     case 0x0B:
       _do_branches(opcode,register_x, register_y, address);
-      break;
+      return true;
     case 0x0A:
       _do_ld_address_instruction(address);
       break;
@@ -376,10 +385,52 @@ void _execute_instruction(instr_t instruction) {
     case 0xD:
       _do_draw(register_x, register_y, last_nibble);
       break;
+    default:
+      return false;
   }
+
+  ++cpu_state.pc;
+  return true;
+}
+
+
+static double _diff_timespec(const struct timespec *time1,
+                      const struct timespec *time0) {
+  return (time1->tv_sec - time0->tv_sec)
+         + (time1->tv_nsec - time0->tv_nsec) / 1e9;
 }
 
 
 void do_cycle() {
-  // TODO: Implementar esto
+  struct timespec current_time;
+  clock_gettime(CLOCK_REALTIME, &current_time);
+
+  if (!cpu_state.running || cpu_state.waiting_for_key) {
+    return;
+  }
+
+  if (_diff_timespec(&current_time,
+                     &last_cpu_cycle_time) == DELAY_CYCLE_DURATION) {
+    memcpy(&last_delay_cycle_time, &current_time, sizeof(struct timespec));
+
+    if (cpu_state.delay_timer) {
+      --cpu_state.delay_timer;
+      return;
+    }
+
+    if (cpu_state.sound_timer) {
+      current_sound_callback();
+      --cpu_state.sound_timer;
+    }
+  }
+
+  if (_diff_timespec(&current_time, &last_cpu_cycle_time) == CPU_CYCLE_DURATION) {
+    memcpy(&last_cpu_cycle_time, &current_time, sizeof(struct timespec));
+    
+    instr_t instruction = ntohs(*((uint16_t*)&memory[cpu_state.pc]));
+
+    if (!_execute_instruction(instruction)) {
+      cpu_state.running = false;
+    }
+  }
 }
