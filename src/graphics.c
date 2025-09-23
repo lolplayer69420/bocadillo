@@ -16,6 +16,7 @@ void init_screen() {
 
 void draw_screen() {
   BeginDrawing();
+  ClearBackground(BLACK);
 
   if (IsWindowResized()) {
     screen_width = GetScreenWidth();
@@ -28,7 +29,7 @@ void draw_screen() {
 
   for (int pos_y = 0; pos_y < 32; ++pos_y) {
     for (int pos_x = 0; pos_x < 64; ++pos_x) {
-      uint64_t current_pixel = (framebuffer[pos_y] >> pos_x) & 0x1;
+      uint64_t current_pixel = (framebuffer[pos_y] >> (63 - pos_x)) & 0x1;
 
       if (current_pixel) {
         DrawRectangle(pos_x * pixel_width, pos_y * pixel_height,

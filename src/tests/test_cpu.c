@@ -8,7 +8,7 @@
 
 
 void setUp() {
-  initialize_cpu();
+  initialize_cpu(NULL);
 }
 
 
@@ -185,11 +185,6 @@ void test_load_key_instruction() {
   send_key(0x5);
 
   TEST_ASSERT_EQUAL_HEX16(0x5, cpu_state.register_file[0x9]);
-}
-
-
-void test_draw_instruction() {
-  // TODO: Implementar esto
 }
 
 

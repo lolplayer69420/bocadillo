@@ -1,8 +1,10 @@
+// TODO: Volver a implementar la entrada de teclado
+
+#include "../raylib/src/raylib.h"
 #include "cpu_internals.h"
 #include "framebuffer.h"
 #include "cpu.h"
 #include <arpa/inet.h>
-#include <netinet/in.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,8 +12,8 @@
 #include <time.h>
 
 #define INLINE static inline __attribute__((always_inline))
-#define CPU_CYCLE_DURATION (double)(1.0 / 800.0)
-#define DELAY_CYCLE_DURATION (double)(1.0 / 60.0)
+#define CPU_CYCLE_INTERVAL (double)(1.0 / 8e6)
+#define DELAY_CYCLE_INTERVAL (double)(1.0 / 60.0)
 
 unsigned char memory[4096];
 uint16_t stack[16];
@@ -95,8 +97,8 @@ uint8_t sprites[] = {
 };
 
 CPUState cpu_state;
-struct timespec last_cpu_cycle_time;
-struct timespec last_delay_cycle_time;
+double next_cpu_update_time;
+double next_delay_update_time;
 SoundCallback current_sound_callback;
 
 
@@ -105,17 +107,20 @@ void load_program(const char *path) {
   FILE *rom_file = fopen(path, "rb");
   char readed;
 
+  next_cpu_update_time = GetTime();
+  next_delay_update_time = GetTime();
+
   while (fread(&readed, 1, 1, rom_file)) {
     memory[current_address++] = readed;
   }
+
+  cpu_state.running = true;
 }
 
 
 void initialize_cpu(SoundCallback sound_callback) {
   memset(&cpu_state, 0, sizeof(CPUState));
   memcpy(memory, sprites, sizeof(sprites));
-  clock_gettime(CLOCK_REALTIME, &last_cpu_cycle_time);
-  clock_gettime(CLOCK_REALTIME, &last_delay_cycle_time);
   current_sound_callback = sound_callback;
 
   cpu_state.pc = PROGRAM_START;
@@ -141,17 +146,19 @@ INLINE void _do_operation_on_registers(uint8_t x, uint8_t y, uint8_t operation) 
       break;
     case 0x1:
       cpu_state.register_file[x] |= cpu_state.register_file[y];
+      cpu_state.register_file[0xF] = 0;
+      break;
+    case 0x2:
+      cpu_state.register_file[x] &= cpu_state.register_file[y];
+      cpu_state.register_file[0xF] = 0;
       break;
     case 0x3:
       cpu_state.register_file[x] ^= cpu_state.register_file[y];
+      cpu_state.register_file[0xF] = 0;
       break;
     case 0x4:
       result_16_bit = cpu_state.register_file[x] + cpu_state.register_file[y];
-
-      if (result_16_bit & 0xFF00) {
-        cpu_state.register_file[0xF] = 1;
-      }
-
+      cpu_state.register_file[0xF] = (result_16_bit & 0xFF) >> 8;
       cpu_state.register_file[x] = result_16_bit;
       break;
     case 0x5:
@@ -164,7 +171,7 @@ INLINE void _do_operation_on_registers(uint8_t x, uint8_t y, uint8_t operation) 
       break;
     case 0x7:
       cpu_state.register_file[y] -= cpu_state.register_file[x];
-      cpu_state.register_file[0xF] = ~(cpu_state.register_file[x] >> 7) & 0x1;
+      cpu_state.register_file[0xF] = ~(cpu_state.register_file[y] >> 7) & 0x1;
       break;
     case 0xE:
       cpu_state.register_file[x] <<= 1;
@@ -176,77 +183,91 @@ INLINE void _do_operation_on_registers(uint8_t x, uint8_t y, uint8_t operation) 
 
 
 INLINE uint8_t _get_pressed_key() {
-  return __builtin_ctz(cpu_state.key_register);
+  for (uint8_t i = 0; i < 16; ++i) {
+    if (cpu_state.keyboard_register[i]) {
+      return i;
+    }
+  }
+
+  return 0;
 }
 
 
 void _handle_key_press() {
   uint8_t key = _get_pressed_key();
-  instr_t last_instruction = ntohs(*((instr_t*)&memory[cpu_state.pc]));
+  instr_t next_instruction = ntohs(*((instr_t*)&memory[cpu_state.pc]));
 
   if (cpu_state.waiting_for_key) {
-    uint8_t register_x = get_register_x(last_instruction);
+    uint8_t register_x = get_register_x(next_instruction);
     cpu_state.register_file[register_x] = key;
     cpu_state.waiting_for_key = false;
-    cpu_state.key_register = 0;
   }
 }
 
 
 INLINE void _do_branches(uint8_t operation, uint8_t x, uint8_t y,
                          uint16_t constant) {
+  uint8_t required_key = cpu_state.register_file[x];  
+
   switch (operation) {
     case 0x01:
       cpu_state.pc = constant;
       break;
     case 0x03:
       if (cpu_state.register_file[x] == ((uint8_t)constant)) {
-        cpu_state.pc += 2;
+        cpu_state.pc += (2 * sizeof(instr_t));
+      } else {
+        cpu_state.pc += sizeof(instr_t);
       }
-
       break;
     case 0x04:
       if (cpu_state.register_file[x] != ((uint8_t)constant)) {
-        cpu_state.pc += 2;
+        cpu_state.pc += (2 * sizeof(instr_t));
+      } else {
+        cpu_state.pc += sizeof(instr_t);
       }
-
       break;
     case 0x05:
       if (cpu_state.register_file[x] == cpu_state.register_file[y]) {
-        cpu_state.pc += 2;
+        cpu_state.pc += (2 * sizeof(instr_t));
+      } else {
+        cpu_state.pc += sizeof(instr_t);
       }
-
+      
       break;
     case 0x09:
       if (cpu_state.register_file[x] != cpu_state.register_file[y]) {
-        cpu_state.pc += 2;
+        cpu_state.pc += (2 * sizeof(instr_t));
+      } else {
+        cpu_state.pc += sizeof(instr_t);
       }
-
       break;
     case 0x0B:
-      cpu_state.pc = constant + cpu_state.register_file[0x0];
+      cpu_state.pc = (constant + cpu_state.register_file[0x0]) * sizeof(instr_t);
       break;
-    case 0x0E:
-      if (constant == 0x9E) {
-        if (!cpu_state.key_register) {
-          return;
-        }
+  }
+}
 
-        if (_get_pressed_key() == cpu_state.register_file[x]) {
-          cpu_state.pc += 2;
-        }
+
+INLINE void _do_key_branches(uint8_t register_x, uint8_t operation) {
+  switch (operation) {
+    case 0x9E:
+      if (cpu_state.keyboard_register[cpu_state.register_file[register_x]]) {
+        cpu_state.keyboard_register[register_x] = 0;
+        cpu_state.pc += (2 * sizeof(instr_t)); 
+      } else {
+        cpu_state.pc += sizeof(instr_t);
       }
 
-      if (constant == 0xA1) {
-        if (!cpu_state.key_register) {
-          return;
-        }
-
-        if (_get_pressed_key() != cpu_state.register_file[x]) {
-          cpu_state.pc += 2;
-        }
+      return;
+    case 0xA1:
+      if (!cpu_state.keyboard_register[register_x]) {
+        cpu_state.pc += (2 * sizeof(instr_t));
+      } else {
+        cpu_state.pc += sizeof(instr_t);
       }
-      break;
+
+      return;
   }
 }
 
@@ -283,16 +304,16 @@ INLINE void _do_memory_instructions(uint8_t register_x, uint8_t operation) {
       tmp = cpu_state.register_file[register_x];
 
       memory[cpu_state.index] = tmp / 100;
-      memory[++cpu_state.index] = (tmp % 100) / 10;
-      memory[++cpu_state.index] = tmp % 10;
+      memory[cpu_state.index + 1] = (tmp % 100) / 10;
+      memory[cpu_state.index + 2] = tmp % 10;
       break;
     case 0x55:
-      for (uint8_t i = 0; i < register_x; ++i) {
+      for (uint8_t i = 0; i < register_x + 1; ++i) {
         memory[cpu_state.index++] = cpu_state.register_file[i];
       }
       break;
     case 0x65:
-      for (uint8_t i = 0; i < register_x; ++i) {
+      for (uint8_t i = 0; i < register_x + 1; ++i) {
         cpu_state.register_file[i] = memory[cpu_state.index++];
       }
       break;
@@ -307,17 +328,24 @@ INLINE void _do_random_instruction(uint8_t register_x, uint8_t byte) {
 
 
 INLINE void _do_call_and_return(uint8_t opcode, uint16_t call_address) {
-  uint16_t return_address;
+  cpu_state.pc += sizeof(instr_t);
 
   switch (opcode) {
-    case 0x20:
+    case 0x02:
       stack[cpu_state.sp] = cpu_state.pc;
       cpu_state.pc = call_address;
-      ++cpu_state.sp;
+      
+      if (cpu_state.sp < 16) {
+        ++cpu_state.sp;
+      } else {
+        puts("Call stack overflow, stopping execution!");
+        cpu_state.running = false;
+      }
+
       break;
     case 0x0:
-      cpu_state.pc = stack[cpu_state.sp];
       --cpu_state.sp;
+      cpu_state.pc = stack[cpu_state.sp];
       break;
   }
 }
@@ -333,9 +361,7 @@ INLINE void _do_draw(uint8_t register_x, uint8_t register_y, uint8_t size) {
 
 
 void send_key(uint8_t key) {
-  cpu_state.key_register = 1;
-  cpu_state.key_register <<= key;
-  _handle_key_press();
+  cpu_state.keyboard_register[key] = 1;
 }
 
 
@@ -345,7 +371,7 @@ bool _execute_instruction(instr_t instruction) {
   uint8_t register_y = get_register_y(instruction);
   uint8_t byte_constant = get_byte_constant(instruction);
   uint16_t address = get_address(instruction);
-  uint8_t last_nibble = get_last_nibble(instruction);
+  uint8_t next_nibble = get_last_nibble(instruction);
 
   switch (opcode) {
     case 0x06:
@@ -355,7 +381,7 @@ bool _execute_instruction(instr_t instruction) {
       _do_add_byte_instruction(register_x, byte_constant);
       break;
     case 0x08:
-      _do_operation_on_registers(register_x, register_y, last_nibble);
+      _do_operation_on_registers(register_x, register_y, next_nibble);
       break;
     case 0x01:
     case 0x03:
@@ -363,7 +389,7 @@ bool _execute_instruction(instr_t instruction) {
     case 0x05:
     case 0x09:
     case 0x0B:
-      _do_branches(opcode,register_x, register_y, address);
+      _do_branches(opcode, register_x, register_y, address);
       return true;
     case 0x0A:
       _do_ld_address_instruction(address);
@@ -374,44 +400,39 @@ bool _execute_instruction(instr_t instruction) {
     case 0x0C:
       _do_random_instruction(register_x, byte_constant);
       break;
-    case 0x20:
+    case 0x02:
     case 0x00:
       if (byte_constant == 0xE0) {
         _clear_display();
       } else {
         _do_call_and_return(opcode, address);
+        return true;
       }
       break;
+    case 0x0E:
+      _do_key_branches(register_x, byte_constant);
+      return true;
     case 0xD:
-      _do_draw(register_x, register_y, last_nibble);
+      _do_draw(register_x, register_y, next_nibble);
       break;
     default:
       return false;
   }
 
-  ++cpu_state.pc;
+  cpu_state.pc += sizeof(instr_t);
   return true;
 }
 
 
-static double _diff_timespec(const struct timespec *time1,
-                      const struct timespec *time0) {
-  return (time1->tv_sec - time0->tv_sec)
-         + (time1->tv_nsec - time0->tv_nsec) / 1e9;
-}
-
-
 void do_cycle() {
-  struct timespec current_time;
-  clock_gettime(CLOCK_REALTIME, &current_time);
+  double current_time = GetTime();
 
   if (!cpu_state.running || cpu_state.waiting_for_key) {
     return;
   }
 
-  if (_diff_timespec(&current_time,
-                     &last_cpu_cycle_time) == DELAY_CYCLE_DURATION) {
-    memcpy(&last_delay_cycle_time, &current_time, sizeof(struct timespec));
+  if (current_time >= next_delay_update_time) {
+    next_delay_update_time += DELAY_CYCLE_INTERVAL; 
 
     if (cpu_state.delay_timer) {
       --cpu_state.delay_timer;
@@ -424,12 +445,13 @@ void do_cycle() {
     }
   }
 
-  if (_diff_timespec(&current_time, &last_cpu_cycle_time) == CPU_CYCLE_DURATION) {
-    memcpy(&last_cpu_cycle_time, &current_time, sizeof(struct timespec));
-    
+  if (current_time >= next_cpu_update_time) {
+    next_cpu_update_time += CPU_CYCLE_INTERVAL; 
     instr_t instruction = ntohs(*((uint16_t*)&memory[cpu_state.pc]));
+    printf("0x%04x\n", instruction);
 
     if (!_execute_instruction(instruction)) {
+      printf("Invalid instruction: %4x\n", instruction);    
       cpu_state.running = false;
     }
   }
