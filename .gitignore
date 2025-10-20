@@ -2,3 +2,4 @@
 !*.cpp
 !makefile
 !*.mk
+compile_commands.json

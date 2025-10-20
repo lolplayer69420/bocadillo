@@ -1,3 +1,5 @@
+// TODO: Volver a implementar la entrada de teclado.
+
 #ifndef CPU_INTERNALS_H
 #define CPU_INTERNALS_H
 
@@ -35,16 +37,15 @@ extern uint16_t stack[16];
 typedef uint16_t instr_t;
 
 #ifdef DEBUG
-  void _execute_instruction(instr_t instruction);
+  bool _execute_instruction(instr_t instruction);
 #endif
-
 
 
 typedef struct CPUState {
   uint8_t register_file[16];
   uint16_t index;
   uint16_t pc;
-  uint16_t key_register;
+  uint8_t keyboard_register[16];
   uint8_t sp;
   bool running;
   bool waiting_for_key;

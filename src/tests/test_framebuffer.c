@@ -16,7 +16,7 @@
 #define len(array) (sizeof(array) / sizeof(array[0]))
 
 void setUp() {
-  initialize_cpu();
+  initialize_cpu(NULL);
   memory[0x0] = 0b10000000;
   memory[0x1] = 0b11111111;
 }
@@ -53,7 +53,7 @@ void test_drawing_a_single_pixel_at_the_end() {
 
 
 void test_drawing_a_sprite() {
-  initialize_cpu();
+  initialize_cpu(NULL);
 
   instr_t program[] = {
     0x00E0,
