@@ -1,10 +1,10 @@
 // TODO: Volver a implementar la entrada de teclado
 
-#include "../raylib/src/raylib.h"
 #include "cpu_internals.h"
 #include "framebuffer.h"
 #include "cpu.h"
 #include <arpa/inet.h>
+#include <raylib.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -100,9 +100,13 @@ CPUState cpu_state;
 double next_cpu_update_time;
 double next_delay_update_time;
 SoundCallback current_sound_callback;
+char *current_program = 0;
 
 
 void load_program(const char *path) {
+  current_program = malloc(strlen(path) + 1);
+  strcpy(current_program, path);
+
   uint16_t current_address = PROGRAM_START;
   FILE *rom_file = fopen(path, "rb");
   char readed;
@@ -158,8 +162,8 @@ INLINE void _do_operation_on_registers(uint8_t x, uint8_t y, uint8_t operation) 
       break;
     case 0x4:
       result_16_bit = cpu_state.register_file[x] + cpu_state.register_file[y];
-      cpu_state.register_file[0xF] = (result_16_bit & 0xFF) >> 8;
       cpu_state.register_file[x] = result_16_bit;
+      cpu_state.register_file[0xF] = (result_16_bit & 0xFF) >> 8;
       break;
     case 0x5:
       cpu_state.register_file[x] -= cpu_state.register_file[y];
@@ -170,7 +174,8 @@ INLINE void _do_operation_on_registers(uint8_t x, uint8_t y, uint8_t operation) 
       cpu_state.register_file[0xF] = cpu_state.register_file[x] & 0x1;
       break;
     case 0x7:
-      cpu_state.register_file[y] -= cpu_state.register_file[x];
+      result_16_bit = cpu_state.register_file[y] - cpu_state.register_file[x];
+      cpu_state.register_file[x] = result_16_bit;
       cpu_state.register_file[0xF] = ~(cpu_state.register_file[y] >> 7) & 0x1;
       break;
     case 0xE:
@@ -190,18 +195,6 @@ INLINE uint8_t _get_pressed_key() {
   }
 
   return 0;
-}
-
-
-void _handle_key_press() {
-  uint8_t key = _get_pressed_key();
-  instr_t next_instruction = ntohs(*((instr_t*)&memory[cpu_state.pc]));
-
-  if (cpu_state.waiting_for_key) {
-    uint8_t register_x = get_register_x(next_instruction);
-    cpu_state.register_file[register_x] = key;
-    cpu_state.waiting_for_key = false;
-  }
 }
 
 
@@ -362,6 +355,17 @@ INLINE void _do_draw(uint8_t register_x, uint8_t register_y, uint8_t size) {
 
 void send_key(uint8_t key) {
   cpu_state.keyboard_register[key] = 1;
+
+  if (cpu_state.waiting_for_key) {
+    uint8_t key = _get_pressed_key();
+    instr_t current_instruction = ntohs(*((instr_t*)&memory[cpu_state.pc]));
+
+    uint8_t register_x = get_register_x(current_instruction);
+    cpu_state.register_file[register_x] = key;
+    cpu_state.keyboard_register[key] = 0;
+    cpu_state.waiting_for_key = false;
+    cpu_state.pc += sizeof(instr_t);
+  }
 }
 
 
@@ -419,7 +423,10 @@ bool _execute_instruction(instr_t instruction) {
       return false;
   }
 
-  cpu_state.pc += sizeof(instr_t);
+  if (!cpu_state.waiting_for_key) {
+    cpu_state.pc += sizeof(instr_t);
+  }
+
   return true;
 }
 
@@ -448,11 +455,62 @@ void do_cycle() {
   if (current_time >= next_cpu_update_time) {
     next_cpu_update_time += CPU_CYCLE_INTERVAL; 
     instr_t instruction = ntohs(*((uint16_t*)&memory[cpu_state.pc]));
-    printf("0x%04x\n", instruction);
 
     if (!_execute_instruction(instruction)) {
-      printf("Invalid instruction: %4x\n", instruction);    
       cpu_state.running = false;
     }
   }
 }
+
+
+void halt_cpu() {
+  cpu_state.running = false;
+}
+
+
+void resume_cpu() {
+  cpu_state.running = true;
+}
+
+
+bool is_cpu_running() {
+  return cpu_state.running;
+}
+
+
+void do_n_steps(size_t steps) {
+  double current_time = GetTime();
+
+  for (size_t i = 0; i < steps; ++i) {
+    if (current_time >= next_delay_update_time) {
+      next_delay_update_time += DELAY_CYCLE_INTERVAL; 
+
+      if (cpu_state.delay_timer) {
+        --cpu_state.delay_timer;
+        return;
+      }
+
+      if (cpu_state.sound_timer) {
+        current_sound_callback();
+        --cpu_state.sound_timer;
+      }
+    }
+
+    instr_t instruction = ntohs(*((uint16_t*)&memory[cpu_state.pc]));
+
+    if (!_execute_instruction(instruction)) {
+      cpu_state.running = false;
+    }  
+  }
+}
+
+
+void reset_cpu() {
+  bool was_cpu_running = cpu_state.running;
+  
+  initialize_cpu(current_sound_callback);
+  load_program(current_program);
+
+  cpu_state.running = was_cpu_running; 
+}
+

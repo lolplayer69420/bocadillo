@@ -1,5 +1,9 @@
+// TODO: Hacer que la ventana de registros se muestre
+
 #include "cpu/framebuffer.h"
+#include "debug/debug.h"
 #include <raylib.h>
+#include <raygui.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -10,6 +14,7 @@ static int screen_height = 32 * 10;
 
 void init_screen() {
   InitWindow(screen_width, screen_height, "bocadillo");
+  GuiSetStyle(DEFAULT, TEXT_SIZE, 10);
   ClearBackground(BLACK);
 }
 
@@ -36,6 +41,10 @@ void draw_screen() {
                       pixel_width, pixel_height, RAYWHITE);
       }
     }
+  }
+
+  if (is_debug_info_visible()) {
+    show_debug_info();
   }
 
   EndDrawing();

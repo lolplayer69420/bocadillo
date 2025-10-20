@@ -1,16 +1,22 @@
 DEBUG=
 CFLAGS=-O2 -I raylib/src -I raygui/src
 LDFLAGS=-L raylib/src
-LDLIBS=-lraylib
+LDLIBS=-lraylib -lm
 
 ifeq ($(DEBUG), true)
 	CFLAGS += -g
 endif
 
-objects=cpu.o framebuffer.o graphics.o main.o
+objects=disassembler.o debug.o cpu.o framebuffer.o graphics.o main.o
 
 bocadillo: $(objects)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(LDLIBS) $^ -o bocadillo
+
+disassembler.o: debug/disassembler.c debug/disassembler.h
+	$(CC) $(CFLAGS) $< -c
+
+debug.o: debug/debug.c debug/debug.h
+	$(CC) $(CFLAGS) $< -c
 
 cpu.o: cpu/cpu.c cpu/cpu.h
 	$(CC) $(CFLAGS) $< -c

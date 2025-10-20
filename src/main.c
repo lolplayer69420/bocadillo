@@ -1,4 +1,5 @@
 #include "cpu/cpu.h"
+#include "debug/debug.h"
 #include "graphics.h"
 #include <raylib.h>
 #include <stdio.h>
@@ -25,6 +26,10 @@ void read_key_and_send() {
 void update() {
   draw_screen();
   do_cycle();
+
+  if (is_debug_info_visible()) {
+    show_debug_info();
+  }
 }
 
 
@@ -38,6 +43,33 @@ int main(int argc, char **argv) {
   init_screen();
 
   while (!WindowShouldClose()) {
+    if (IsKeyPressed(KEY_F1)) {
+      if (!is_debug_info_visible()) {
+        show_debug_info();
+      } else {
+        hide_debug_info();
+      }
+    }
+
+    if (IsKeyPressed(KEY_SPACE)) {
+      if (is_cpu_running()) {
+        halt_cpu();
+      } else {
+        resume_cpu();
+      }
+    }
+
+
+    if (IsKeyPressed(KEY_F2)) {
+      reset_cpu();
+    }
+
+    if (IsKeyPressed(KEY_F3)) {
+      if (!is_cpu_running()) {
+        do_n_steps(1);
+      }
+    }
+
     read_key_and_send();
     update();
   }
