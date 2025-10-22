@@ -143,6 +143,7 @@ INLINE void _do_add_byte_instruction(uint8_t dest, uint8_t value) {
 
 INLINE void _do_operation_on_registers(uint8_t x, uint8_t y, uint8_t operation) {
   uint16_t result_16_bit = 0;
+  uint8_t flag = 0;
 
   switch (operation) {
     case 0x0:
@@ -163,25 +164,28 @@ INLINE void _do_operation_on_registers(uint8_t x, uint8_t y, uint8_t operation) 
     case 0x4:
       result_16_bit = cpu_state.register_file[x] + cpu_state.register_file[y];
       cpu_state.register_file[x] = result_16_bit;
-      cpu_state.register_file[0xF] = (result_16_bit & 0xFF) >> 8;
+      cpu_state.register_file[0xF] = result_16_bit >> 8;
       break;
     case 0x5:
       cpu_state.register_file[x] -= cpu_state.register_file[y];
       cpu_state.register_file[0xF] = ~(cpu_state.register_file[x] >> 7) & 0x1;
       break;
     case 0x6:
-      cpu_state.register_file[x] >>= 1;
-      cpu_state.register_file[0xF] = cpu_state.register_file[x] & 0x1;
+      flag = cpu_state.register_file[y] & 0x1;
+      cpu_state.register_file[x] = cpu_state.register_file[y] >> 1;
+      cpu_state.register_file[0xF] = flag;
       break;
     case 0x7:
       result_16_bit = cpu_state.register_file[y] - cpu_state.register_file[x];
+      flag = ~(result_16_bit >> 7) & 1; 
       cpu_state.register_file[x] = result_16_bit;
-      cpu_state.register_file[0xF] = ~(cpu_state.register_file[y] >> 7) & 0x1;
+      cpu_state.register_file[0xF] = flag;
       break;
     case 0xE:
-      cpu_state.register_file[x] <<= 1;
-      cpu_state.register_file[0xF] = cpu_state.register_file[x] & 0x80;
-      cpu_state.register_file[0xF] >>= 7;
+      flag = cpu_state.register_file[y] & 0x80;
+      flag >>= 7;
+      cpu_state.register_file[x] = cpu_state.register_file[y] << 1;
+      cpu_state.register_file[0xF] = flag;
       break;
   }
 }
