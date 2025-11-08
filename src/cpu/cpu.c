@@ -1,7 +1,7 @@
-// TODO: Volver a implementar la entrada de teclado
-
+// TODO: Arreglar la tecla E
 #include "cpu_internals.h"
 #include "framebuffer.h"
+#include "sound.h"
 #include "cpu.h"
 #include <arpa/inet.h>
 #include <raylib.h>
@@ -14,6 +14,7 @@
 #define INLINE static inline __attribute__((always_inline))
 #define CPU_CYCLE_INTERVAL (double)(1.0 / 8e6)
 #define DELAY_CYCLE_INTERVAL (double)(1.0 / 60.0)
+#define DISPLAY_INTERVAL (double)(1.0/50.0)
 
 unsigned char memory[4096];
 uint16_t stack[16];
@@ -99,7 +100,12 @@ uint8_t sprites[] = {
 CPUState cpu_state;
 double next_cpu_update_time;
 double next_delay_update_time;
-SoundCallback current_sound_callback;
+double next_display_interrupt_time;
+bool waiting_for_display_interrupt;
+uint8_t next_draw_x_pos;
+uint8_t next_draw_y_pos;
+uint8_t next_draw_size;
+bool play_sound;
 char *current_program = 0;
 
 
@@ -122,10 +128,10 @@ void load_program(const char *path) {
 }
 
 
-void initialize_cpu(SoundCallback sound_callback) {
+void initialize_cpu() {
   memset(&cpu_state, 0, sizeof(CPUState));
   memcpy(memory, sprites, sizeof(sprites));
-  current_sound_callback = sound_callback;
+  initialize_sound();
 
   cpu_state.pc = PROGRAM_START;
 }
@@ -204,8 +210,6 @@ INLINE uint8_t _get_pressed_key() {
 
 INLINE void _do_branches(uint8_t operation, uint8_t x, uint8_t y,
                          uint16_t constant) {
-  uint8_t required_key = cpu_state.register_file[x];  
-
   switch (operation) {
     case 0x01:
       cpu_state.pc = constant;
@@ -240,7 +244,7 @@ INLINE void _do_branches(uint8_t operation, uint8_t x, uint8_t y,
       }
       break;
     case 0x0B:
-      cpu_state.pc = (constant + cpu_state.register_file[0x0]) * sizeof(instr_t);
+      cpu_state.pc = constant + cpu_state.register_file[0x0];
       break;
   }
 }
@@ -324,19 +328,18 @@ INLINE void _do_random_instruction(uint8_t register_x, uint8_t byte) {
 }
 
 
-INLINE void _do_call_and_return(uint8_t opcode, uint16_t call_address) {
+INLINE bool _do_call_and_return(uint8_t opcode, uint16_t call_address) {
   cpu_state.pc += sizeof(instr_t);
 
   switch (opcode) {
     case 0x02:
-      stack[cpu_state.sp] = cpu_state.pc;
-      cpu_state.pc = call_address;
-      
       if (cpu_state.sp < 16) {
+        stack[cpu_state.sp] = cpu_state.pc;
+        cpu_state.pc = call_address;
         ++cpu_state.sp;
       } else {
         puts("Call stack overflow, stopping execution!");
-        cpu_state.running = false;
+        return false;
       }
 
       break;
@@ -345,15 +348,17 @@ INLINE void _do_call_and_return(uint8_t opcode, uint16_t call_address) {
       cpu_state.pc = stack[cpu_state.sp];
       break;
   }
+
+  return true;
 }
 
 
 INLINE void _do_draw(uint8_t register_x, uint8_t register_y, uint8_t size) {
-  uint8_t x_pos = cpu_state.register_file[register_x];
-  uint8_t y_pos = cpu_state.register_file[register_y];
+  next_draw_x_pos = cpu_state.register_file[register_x];
+  next_draw_y_pos = cpu_state.register_file[register_y];
+  next_draw_size = size;
 
-  cpu_state.register_file[0xF] = _draw_sprite(&memory[cpu_state.index],
-                                              x_pos, y_pos, size);
+  waiting_for_display_interrupt = true;
 }
 
 
@@ -413,8 +418,7 @@ bool _execute_instruction(instr_t instruction) {
       if (byte_constant == 0xE0) {
         _clear_display();
       } else {
-        _do_call_and_return(opcode, address);
-        return true;
+        return _do_call_and_return(opcode, address);
       }
       break;
     case 0x0E:
@@ -442,18 +446,42 @@ void do_cycle() {
     return;
   }
 
+  if (waiting_for_display_interrupt) {
+    if (current_time >= next_display_interrupt_time) {
+      next_display_interrupt_time += DISPLAY_INTERVAL;
+
+      cpu_state.register_file[0xF] = _draw_sprite(
+        &memory[cpu_state.index],
+        next_draw_x_pos,
+        next_draw_y_pos,
+        next_draw_size
+      );
+
+      waiting_for_display_interrupt = false;
+    } else {
+      return;
+    }
+  }
+
   if (current_time >= next_delay_update_time) {
     next_delay_update_time += DELAY_CYCLE_INTERVAL; 
+
+    if (cpu_state.sound_timer) {
+      if (!play_sound) {
+        play_sound = true;
+        start_playing_sound();
+      }
+
+      --cpu_state.sound_timer;
+    } else {
+      play_sound = false;
+      stop_playing_sound();
+    }
 
     if (cpu_state.delay_timer) {
       --cpu_state.delay_timer;
       return;
-    }
-
-    if (cpu_state.sound_timer) {
-      current_sound_callback();
-      --cpu_state.sound_timer;
-    }
+    }    
   }
 
   if (current_time >= next_cpu_update_time) {
@@ -485,6 +513,17 @@ bool is_cpu_running() {
 void do_n_steps(size_t steps) {
   double current_time = GetTime();
 
+  if (waiting_for_display_interrupt) {
+    cpu_state.register_file[0xF] = _draw_sprite(
+      &memory[cpu_state.index], 
+      next_draw_x_pos,
+      next_draw_y_pos,
+      next_draw_size
+    );
+
+    waiting_for_display_interrupt = false;
+  }
+
   for (size_t i = 0; i < steps; ++i) {
     if (current_time >= next_delay_update_time) {
       next_delay_update_time += DELAY_CYCLE_INTERVAL; 
@@ -495,8 +534,6 @@ void do_n_steps(size_t steps) {
       }
 
       if (cpu_state.sound_timer) {
-        current_sound_callback();
-        --cpu_state.sound_timer;
       }
     }
 
@@ -512,7 +549,7 @@ void do_n_steps(size_t steps) {
 void reset_cpu() {
   bool was_cpu_running = cpu_state.running;
   
-  initialize_cpu(current_sound_callback);
+  initialize_cpu();
   load_program(current_program);
 
   cpu_state.running = was_cpu_running; 
