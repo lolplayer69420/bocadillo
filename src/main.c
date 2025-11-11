@@ -4,11 +4,13 @@
 #include <raylib.h>
 #include <stdio.h>
 
-// TODO: Escribir el sistema de sonido
-
 
 void read_key_and_send() {
   char key = GetCharPressed();
+
+  if (!key) {
+    return;
+  }
 
   if (key >= '0' && key <= '9') {
     send_key(key - '0');

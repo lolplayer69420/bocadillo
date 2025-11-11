@@ -1,4 +1,3 @@
-// TODO: Arreglar la tecla E
 #include "cpu_internals.h"
 #include "framebuffer.h"
 #include "sound.h"
@@ -251,10 +250,12 @@ INLINE void _do_branches(uint8_t operation, uint8_t x, uint8_t y,
 
 
 INLINE void _do_key_branches(uint8_t register_x, uint8_t operation) {
+  uint8_t key = cpu_state.register_file[register_x];
+
   switch (operation) {
     case 0x9E:
       if (cpu_state.keyboard_register[cpu_state.register_file[register_x]]) {
-        cpu_state.keyboard_register[register_x] = 0;
+        cpu_state.keyboard_register[key] = 0;
         cpu_state.pc += (2 * sizeof(instr_t)); 
       } else {
         cpu_state.pc += sizeof(instr_t);
@@ -362,7 +363,7 @@ INLINE void _do_draw(uint8_t register_x, uint8_t register_y, uint8_t size) {
 }
 
 
-void send_key(uint8_t key) {
+void set_key(uint8_t key) {
   cpu_state.keyboard_register[key] = 1;
 
   if (cpu_state.waiting_for_key) {
