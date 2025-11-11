@@ -7,7 +7,7 @@ ifeq ($(DEBUG), true)
 	CFLAGS += -g
 endif
 
-objects=disassembler.o debug.o cpu.o framebuffer.o graphics.o main.o
+objects=disassembler.o debug.o sound.o cpu.o framebuffer.o graphics.o main.o
 
 bocadillo: $(objects)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(LDLIBS) $^ -o bocadillo
@@ -16,6 +16,9 @@ disassembler.o: debug/disassembler.c debug/disassembler.h
 	$(CC) $(CFLAGS) $< -c
 
 debug.o: debug/debug.c debug/debug.h
+	$(CC) $(CFLAGS) $< -c
+
+sound.o: cpu/sound.c cpu/sound.h
 	$(CC) $(CFLAGS) $< -c
 
 cpu.o: cpu/cpu.c cpu/cpu.h

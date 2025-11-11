@@ -5,13 +5,12 @@
 #include <stdio.h>
 
 
-void beep() {
-  // TODO: Implementar esto
-}
-
-
 void read_key_and_send() {
   char key = GetCharPressed();
+
+  if (!key) {
+    return;
+  }
 
   if (key >= '0' && key <= '9') {
     send_key(key - '0');
@@ -34,13 +33,12 @@ void update() {
 
 
 int main(int argc, char **argv) {
-  initialize_cpu(beep);
+  init_screen();
+  initialize_cpu();
 
   if (argc) {
     load_program(argv[1]);
   }
-
-  init_screen();
 
   while (!WindowShouldClose()) {
     if (IsKeyPressed(KEY_F1)) {
